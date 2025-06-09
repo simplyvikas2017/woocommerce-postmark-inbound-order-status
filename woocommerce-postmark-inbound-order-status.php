@@ -257,21 +257,34 @@ function pmib_handle_inbound(WP_REST_Request $request) {
         return new WP_REST_Response(['error' => 'No valid status found'], 400);
     }
 
-    $orders = wc_get_orders([
-        'limit' => 1,
-        'orderby' => 'date',
-        'order' => 'DESC',
-        'status' => ['processing'],
-    ]);
+    // Extract order ID from both Subject and Body
+    $subject_order_id = null;
+    $body_order_id = null;
 
-    if (empty($orders)) {
-        return new WP_REST_Response(['error' => 'No matching order'], 404);
+    if (!empty($params['Subject']) && preg_match('/#(\d+)/', $params['Subject'], $matches)) {
+        $subject_order_id = absint($matches[1]);
     }
 
-    $order = $orders[0];
+    $body_text = $params['TextBody'] ?? '';
+    $body_text .= "\n" . ($params['HtmlBody'] ?? '');
+
+    if (preg_match_all('/#(\d+)/', $body_text, $matches)) {
+        $body_order_id = absint($matches[1][0]);
+    }
+
+    if ($subject_order_id && $body_order_id && $subject_order_id === $body_order_id) {
+        $order = wc_get_order($subject_order_id);
+        if (!$order) {
+            return new WP_REST_Response(['error' => 'Order not found.'], 404);
+        }
+    } else {
+        return new WP_REST_Response(['error' => 'Order number mismatch between subject and body'], 400);
+    }
+
     $order->update_status($status, 'Updated via Postmark Inbound');
 
     wp_mail($from_email, 'Order ' . $order->get_id() . ' updated', 'Status changed to ' . $status);
 
     return ['success' => true, 'order_id' => $order->get_id(), 'new_status' => $status];
 }
+
